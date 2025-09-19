@@ -178,145 +178,154 @@ function TableRenderer({ data }: { data: TableData }) {
   );
 }
 
-// Chart.js renderer with full Chart.js integration
+// Chart.js renderer with simplified and defensive configuration
 function ChartRenderer({ data }: { data: ChartData }) {
-  // Default chart options with responsive settings
-  const defaultOptions: ChartOptions<any> = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: "top" as const,
-        labels: {
-          padding: 20,
-          usePointStyle: true,
-        },
-      },
-      title: {
-        display: false,
-      },
-      tooltip: {
-        backgroundColor: "rgba(0, 0, 0, 0.8)",
-        titleColor: "white",
-        bodyColor: "white",
-        borderColor: "rgba(255, 255, 255, 0.1)",
-        borderWidth: 1,
-        cornerRadius: 8,
-        callbacks: {
-          label: function (context: any) {
-            const label = context.dataset.label || "";
-            const value = context.parsed.y ?? context.parsed;
-            // Format currency values
-            if (
-              typeof value === "number" &&
-              (label.toLowerCase().includes("sales") ||
-                label.toLowerCase().includes("revenue") ||
-                label.toLowerCase().includes("tax") ||
-                label.toLowerCase().includes("tip"))
-            ) {
-              return `${label}: $${value.toLocaleString()}`;
-            }
-            return `${label}: ${value}`;
-          },
-        },
-      },
-    },
-    scales:
-      data.type !== "pie" && data.type !== "doughnut"
-        ? {
-            y: {
-              beginAtZero: true,
-              grid: {
-                color: "rgba(0, 0, 0, 0.1)",
-              },
-              ticks: {
-                callback: function (value: any) {
-                  // Format currency on y-axis for sales data
-                  if (
-                    typeof value === "number" &&
-                    data.datasets.some(
-                      (d) =>
-                        d.label?.toLowerCase().includes("sales") ||
-                        d.label?.toLowerCase().includes("revenue") ||
-                        d.label?.toLowerCase().includes("tax") ||
-                        d.label?.toLowerCase().includes("tip")
-                    )
-                  ) {
-                    return "$" + value.toLocaleString();
-                  }
-                  return value;
-                },
-              },
-            },
-            x: {
-              grid: {
-                color: "rgba(0, 0, 0, 0.1)",
-              },
-            },
-          }
-        : undefined,
-    ...data.options,
-  };
+  console.log("ChartRenderer received data:", data);
 
-  // Prepare chart data with enhanced styling
-  const prepareDatasets = (datasets: any[], chartType: string) => {
-    return datasets.map((dataset, index) => {
-      const baseDataset = {
-        ...dataset,
-        backgroundColor:
-          dataset.backgroundColor ||
-          [
-            "rgba(59, 130, 246, 0.8)",
-            "rgba(16, 185, 129, 0.8)",
-            "rgba(245, 158, 11, 0.8)",
-            "rgba(239, 68, 68, 0.8)",
-            "rgba(139, 92, 246, 0.8)",
-            "rgba(236, 72, 153, 0.8)",
-          ][index % 6],
-        borderColor:
-          dataset.borderColor ||
-          [
-            "rgba(59, 130, 246, 1)",
-            "rgba(16, 185, 129, 1)",
-            "rgba(245, 158, 11, 1)",
-            "rgba(239, 68, 68, 1)",
-            "rgba(139, 92, 246, 1)",
-            "rgba(236, 72, 153, 1)",
-          ][index % 6],
-        borderWidth: dataset.borderWidth || 2,
-      };
+  // Validate input data
+  if (
+    !data ||
+    !data.labels ||
+    !data.datasets ||
+    !Array.isArray(data.datasets)
+  ) {
+    console.error("Invalid chart data:", data);
+    return (
+      <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+        <p className="text-sm text-yellow-700 dark:text-yellow-300">
+          ⚠️ Invalid chart data structure
+        </p>
+      </div>
+    );
+  }
 
-      // Remove the type property to avoid conflicts with Chart.js typing
-      const { type, ...cleanDataset } = baseDataset;
-      return cleanDataset;
-    });
-  };
+  // Clean and prepare datasets - remove problematic properties
+  const cleanDatasets = data.datasets.map((dataset, index) => {
+    // Remove all potentially problematic properties
+    const {
+      type,
+      yAxisID,
+      borderDash,
+      fill,
+      tension,
+      pointRadius,
+      ...cleanDataset
+    } = dataset;
+
+    return {
+      ...cleanDataset,
+      label: dataset.label || `Dataset ${index + 1}`,
+      data: Array.isArray(dataset.data) ? dataset.data : [],
+      backgroundColor:
+        dataset.backgroundColor ||
+        [
+          "rgba(59, 130, 246, 0.8)",
+          "rgba(16, 185, 129, 0.8)",
+          "rgba(245, 158, 11, 0.8)",
+          "rgba(239, 68, 68, 0.8)",
+          "rgba(139, 92, 246, 0.8)",
+          "rgba(236, 72, 153, 0.8)",
+        ][index % 6],
+      borderColor:
+        dataset.borderColor ||
+        [
+          "rgba(59, 130, 246, 1)",
+          "rgba(16, 185, 129, 1)",
+          "rgba(245, 158, 11, 1)",
+          "rgba(239, 68, 68, 1)",
+          "rgba(139, 92, 246, 1)",
+          "rgba(236, 72, 153, 1)",
+        ][index % 6],
+      borderWidth:
+        typeof dataset.borderWidth === "number" ? dataset.borderWidth : 1,
+    };
+  });
 
   const chartData = {
-    labels: data.labels,
-    datasets: prepareDatasets(data.datasets, data.type),
+    labels: Array.isArray(data.labels) ? data.labels : [],
+    datasets: cleanDatasets,
+  };
+
+  // Minimal, safe options configuration
+  const getChartOptions = (chartType: string) => {
+    const baseOptions: ChartOptions<any> = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "top" as const,
+        },
+        tooltip: {
+          enabled: true,
+        },
+      },
+    };
+
+    // Only add scales for charts that need them
+    if (chartType === "bar" || chartType === "line") {
+      baseOptions.scales = {
+        x: {
+          display: true,
+        },
+        y: {
+          display: true,
+          beginAtZero: true,
+        },
+      };
+    }
+
+    return baseOptions;
   };
 
   const containerClass = "w-full h-64 md:h-80";
 
-  return (
-    <div className="space-y-4">
-      <div className={containerClass}>
-        {data.type === "bar" && (
-          <Bar data={chartData as any} options={defaultOptions} />
-        )}
-        {data.type === "line" && (
-          <Line data={chartData as any} options={defaultOptions} />
-        )}
-        {data.type === "pie" && (
-          <Pie data={chartData as any} options={defaultOptions} />
-        )}
-        {data.type === "doughnut" && (
-          <Doughnut data={chartData as any} options={defaultOptions} />
-        )}
+  try {
+    const chartType = data.type || "bar";
+    const options = getChartOptions(chartType);
+
+    console.log("Rendering chart with type:", chartType);
+    console.log("Chart data:", chartData);
+    console.log("Chart options:", options);
+
+    return (
+      <div className="space-y-4">
+        <div className={containerClass}>
+          {chartType === "bar" && <Bar data={chartData} options={options} />}
+          {chartType === "line" && <Line data={chartData} options={options} />}
+          {chartType === "pie" && <Pie data={chartData} options={options} />}
+          {chartType === "doughnut" && (
+            <Doughnut data={chartData} options={options} />
+          )}
+          {/* Fallback to bar chart for unknown types */}
+          {!["bar", "line", "pie", "doughnut"].includes(chartType) && (
+            <Bar data={chartData} options={options} />
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  } catch (error) {
+    console.error("Error rendering chart:", error);
+    console.error("Chart data that caused error:", data);
+
+    return (
+      <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+        <p className="text-sm text-red-700 dark:text-red-300 font-medium">
+          ⚠️ Chart rendering failed
+        </p>
+        <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+          {error instanceof Error ? error.message : String(error)}
+        </p>
+        <details className="mt-2">
+          <summary className="text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+            Show chart data
+          </summary>
+          <pre className="text-xs text-slate-600 dark:text-slate-400 overflow-auto max-h-32 mt-1 p-2 bg-slate-100 dark:bg-slate-800 rounded">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </details>
+      </div>
+    );
+  }
 }
 
 function PieChartRenderer({ data }: { data: ChartData }) {
@@ -478,7 +487,11 @@ function CardRenderer({ cards }: { cards: CardData[] }) {
     if (!iconName) return null;
 
     // Check if it's an emoji (Unicode character)
-    if (/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u.test(iconName)) {
+    if (
+      /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u.test(
+        iconName
+      )
+    ) {
       // Return emoji as a span element
       return () => <span className="text-lg">{iconName}</span>;
     }
@@ -790,9 +803,8 @@ function StreamingSectionRenderer({
           />
         )}
 
-      {(section.type === "cards" || section.type === "card") && Array.isArray(section.data) && (
-        <CardRenderer cards={section.data} />
-      )}
+      {(section.type === "cards" || section.type === "card") &&
+        Array.isArray(section.data) && <CardRenderer cards={section.data} />}
 
       {section.type === "chart" && section.data && (
         <div className="space-y-2">{renderChart(section, index)}</div>
@@ -804,42 +816,81 @@ function StreamingSectionRenderer({
 // Enhanced chart renderer for streaming sections
 function renderChart(section: StreamingSection, index: number) {
   const data = section.data;
+  console.log(`Rendering chart with data:`, data);
 
-  // Handle direct ChartData structure
-  if (
-    data &&
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    "type" in data &&
-    "labels" in data &&
-    "datasets" in data
-  ) {
-    return <ChartRenderer data={data as ChartData} />;
+  try {
+    // Handle direct ChartData structure
+    if (
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      "type" in data &&
+      "labels" in data &&
+      "datasets" in data
+    ) {
+      return <ChartRenderer data={data as ChartData} />;
+    }
+
+    // Handle data structure with chart properties at root level
+    if (
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      ("type" in data || "labels" in data || "datasets" in data)
+    ) {
+      const chartData: ChartData = {
+        type: (data as any).type || "bar",
+        labels: (data as any).labels || [],
+        datasets: (data as any).datasets || [],
+      };
+      return <ChartRenderer data={chartData} />;
+    }
+
+    // Handle stringified JSON data
+    if (typeof data === "string") {
+      try {
+        const parsedData = JSON.parse(data);
+        if (
+          parsedData &&
+          typeof parsedData === "object" &&
+          ("type" in parsedData ||
+            "labels" in parsedData ||
+            "datasets" in parsedData)
+        ) {
+          const chartData: ChartData = {
+            type: parsedData.type || "bar",
+            labels: parsedData.labels || [],
+            datasets: parsedData.datasets || [],
+          };
+          return <ChartRenderer data={chartData} />;
+        }
+      } catch (e) {
+        console.error("Error parsing chart data string:", e);
+      }
+    }
+
+    // Fallback for invalid chart data
+    console.error("Invalid chart data format:", data);
+    return (
+      <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+        <p className="text-sm text-yellow-700 dark:text-yellow-300">
+          ⚠️ Invalid chart data format
+        </p>
+        <pre className="mt-2 text-xs text-slate-500 dark:text-slate-400 overflow-auto max-h-40">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    );
+  } catch (error) {
+    console.error("Error rendering chart:", error);
+    return (
+      <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+        <p className="text-sm text-red-700 dark:text-red-300">
+          ⚠️ Error rendering chart: {String(error)}
+        </p>
+      </div>
+    );
   }
-
-  // Handle data structure with chart properties at root level
-  if (
-    data &&
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    ("type" in data || "labels" in data || "datasets" in data)
-  ) {
-    const chartData: ChartData = {
-      type: (data as any).type || "bar",
-      labels: (data as any).labels || [],
-      datasets: (data as any).datasets || [],
-    };
-    return <ChartRenderer data={chartData} />;
-  }
-
-  // Fallback for invalid chart data
-  return (
-    <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-      <p className="text-sm text-yellow-700 dark:text-yellow-300">
-        ⚠️ Invalid chart data format
-      </p>
-    </div>
-  );
 }
 
 // Enhanced cards renderer for streaming sections
