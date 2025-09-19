@@ -28,12 +28,8 @@ export default function Home() {
   useEffect(() => {
     const loadConversationHistory = async () => {
       try {
-        // Get the most recent conversation or start a new one
+        // Get the most recent conversation (thread_id based)
         let conversationId = await getMostRecentConversationId();
-
-        if (!conversationId) {
-          conversationId = await startNewConversation();
-        }
 
         if (conversationId) {
           setCurrentConversationId(conversationId);
@@ -70,6 +66,11 @@ export default function Home() {
             });
 
           setMessages(formattedMessages);
+        } else {
+          // No existing conversation - will create new thread on first message
+          console.log(
+            "No existing conversation found. New thread will be created on first message."
+          );
         }
       } catch (error) {
         console.error("Error loading conversation history:", error);
@@ -82,11 +83,6 @@ export default function Home() {
   }, []);
 
   const handleSendMessage = async (content: string) => {
-    if (!currentConversationId) {
-      console.error("No active conversation");
-      return;
-    }
-
     // Add user message to UI immediately
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -98,9 +94,6 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage]);
 
     try {
-      // Save user message to database
-      await saveChatMessage(currentConversationId, "user", content);
-
       console.log("🚀 Starting streaming AI workflow for query:", content);
       setProcessingStep("🤖 Processing your request...");
 
@@ -108,7 +101,10 @@ export default function Home() {
       const response = await fetch("/api/streaming-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({
+          message: content,
+          conversation_id: currentConversationId || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -126,6 +122,7 @@ export default function Home() {
       let buffer = "";
       let finalResponse = null;
       let streamEnded = false;
+      let threadId = null; // Track the thread_id from the response
 
       setProcessingStep("🔍 Analyzing your query...");
 
@@ -150,6 +147,43 @@ export default function Home() {
               try {
                 const jsonData = JSON.parse(line.slice(6)); // Remove 'data: ' prefix
                 console.log("📡 Streaming data:", jsonData);
+
+                // Capture thread_id from various event types
+                if (jsonData.thread_id) {
+                  // Thread ID can come from thread_create event or directly in message events
+                  threadId = jsonData.thread_id;
+                  console.log("🧵 Thread ID captured:", threadId);
+
+                  // Update current conversation ID with the thread_id
+                  setCurrentConversationId(threadId);
+                } else if (
+                  jsonData.id &&
+                  jsonData.event_type === "thread_create"
+                ) {
+                  // Some APIs provide the ID as the thread_id in thread_create events
+                  threadId = jsonData.id;
+                  console.log("🧵 Thread ID captured from id field:", threadId);
+
+                  // Update current conversation ID with the thread_id
+                  setCurrentConversationId(threadId);
+                }
+
+                // Try to capture thread_id from first user message if not already captured
+                if (
+                  !threadId &&
+                  jsonData.event_type === "new_message" &&
+                  jsonData.role === "user"
+                ) {
+                  // Some APIs include the thread_id in the first user message
+                  if (jsonData.id) {
+                    threadId = jsonData.id;
+                    console.log(
+                      "🧵 Thread ID captured from first user message:",
+                      threadId
+                    );
+                    setCurrentConversationId(threadId);
+                  }
+                }
 
                 // Update processing step based on the event
                 if (jsonData.event_type === "new_message") {
@@ -178,7 +212,10 @@ export default function Home() {
                     if (jsonData.content?.[0]?.type === "json") {
                       try {
                         finalResponse = JSON.parse(jsonData.content[0].text);
-                        console.log("🎯 Final response captured:", finalResponse);
+                        console.log(
+                          "🎯 Final response captured:",
+                          finalResponse
+                        );
                       } catch (e) {
                         console.error("Error parsing final response:", e);
                       }
@@ -188,7 +225,9 @@ export default function Home() {
 
                 // Check for stream completion
                 if (jsonData.event === "stream.ended") {
-                  console.log("🏁 Stream ended, ready to display final response");
+                  console.log(
+                    "🏁 Stream ended, ready to display final response"
+                  );
                   streamEnded = true;
                   break; // Exit the line processing loop
                 }
@@ -216,25 +255,33 @@ export default function Home() {
       if (streamEnded && finalResponse) {
         console.log("🎯 Processing Final Response:", finalResponse);
 
-        // Add AI message to UI
-        const aiMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: finalResponse,
-          isAI: true,
-          timestamp: new Date(),
-        };
+        // Use captured threadId or fall back to currentConversationId
+        const conversationId = threadId || currentConversationId;
 
-        setMessages((prev) => [...prev, aiMessage]);
+        if (conversationId) {
+          console.log("🧵 Using conversation ID:", conversationId);
 
-        // Save AI response to database
-        const responseContent = JSON.stringify(finalResponse);
-        await saveChatMessage(
-          currentConversationId,
-          "assistant",
-          responseContent
-        );
+          // Save user message to database
+          await saveChatMessage(conversationId, "user", content);
 
-        console.log("✅ Streaming AI workflow completed successfully!");
+          // Add AI message to UI
+          const aiMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: finalResponse,
+            isAI: true,
+            timestamp: new Date(),
+          };
+
+          setMessages((prev) => [...prev, aiMessage]);
+
+          // Save AI response to database
+          const responseContent = JSON.stringify(finalResponse);
+          await saveChatMessage(conversationId, "assistant", responseContent);
+
+          console.log("✅ Streaming AI workflow completed successfully!");
+        } else {
+          throw new Error("No conversation ID available to save messages");
+        }
       } else if (streamEnded && !finalResponse) {
         throw new Error("Stream ended but no final response was captured");
       } else if (!streamEnded) {
@@ -261,11 +308,12 @@ export default function Home() {
 
   const handleNewConversation = async () => {
     try {
-      const newConversationId = await startNewConversation();
-      if (newConversationId) {
-        setCurrentConversationId(newConversationId);
-        setMessages([]);
-      }
+      // Clear current conversation - new thread_id will be created on next message
+      setCurrentConversationId(null);
+      setMessages([]);
+      console.log(
+        "Started new conversation. New thread_id will be created on next message."
+      );
     } catch (error) {
       console.error("Error starting new conversation:", error);
     }
